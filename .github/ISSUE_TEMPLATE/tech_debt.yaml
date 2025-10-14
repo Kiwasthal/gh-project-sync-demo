@@ -1,0 +1,36 @@
+name: "💡 Tech Debt Item"
+description: "Log a technical debt issue (refactor, cleanup, etc.)"
+labels: ["tech-debt"]
+projects:
+  - Kiwasthal/2
+body:
+  - type: input
+    id: area
+    attributes:
+      label: "Area / Component"
+      description: "Which part of the codebase does this relate to?"
+  - type: textarea
+    id: description
+    attributes:
+      label: "Description"
+      description: "Describe the technical debt and why it exists."
+  - type: textarea
+    id: impact
+    attributes:
+      label: "Impact"
+      description: "What happens if we don’t fix this?"
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "Proposed Action"
+      description: "How should we fix or refactor this?"
+  - type: dropdown
+    id: category
+    attributes:
+      label: "Category"
+      options: ["Refactor", "Lint", "Performance", "Dependency", "Cleanup"]
+  - type: dropdown
+    id: effort
+    attributes:
+      label: "Effort"
+      options: ["S", "M", "L"]

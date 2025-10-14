@@ -1,0 +1,116 @@
+name: Sync Tech Debt form to Project fields
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  issues: read
+  projects: write
+  contents: read
+
+env:
+  PROJECT_URL: https://github.com/orgs/Kiwasthal/projects/2
+
+jobs:
+  sync:
+    if: contains(github.event.issue.labels.*.name, 'tech-debt')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Ensure issue is on the project
+        uses: actions/add-to-project@v0.5.0
+        with:
+          project-url: ${{ env.PROJECT_URL }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Map form fields to Project fields
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const body = (context.payload.issue.body || '');
+            const section = (label) => {
+              const re = new RegExp(`(?<=^###\\s*${label}\\s*\\n)[\\s\\S]*?(?=\\n###\\s|$)`, 'mi');
+              const m = body.match(re);
+              return m ? m[0].trim() : null;
+            };
+
+            const effort = section('Effort');
+            const impact = section('Impact');
+            const category = section('Category');
+
+            const projectUrl = process.env.PROJECT_URL;
+            const orgMatch = projectUrl.match(/orgs\\/([^/]+)\\/projects\\/(\\d+)/);
+            if (!orgMatch) core.setFailed(`Bad PROJECT_URL: ${projectUrl}`);
+            const org = orgMatch[1];
+            const number = parseInt(orgMatch[2], 10);
+
+            const issueId = context.payload.issue.node_id;
+
+            const projectQuery = `
+              query($org: String!, $number: Int!) {
+                organization(login: $org) {
+                  projectV2(number: $number) {
+                    id
+                    fields(first: 50) {
+                      nodes {
+                        ... on ProjectV2FieldCommon { id name dataType }
+                        ... on ProjectV2SingleSelectField { id name options { id name } }
+                      }
+                    }
+                    items(first: 200) {
+                      nodes { id content { ... on Issue { id } } }
+                    }
+                  }
+                }
+              }
+            `;
+            const projData = await github.graphql(projectQuery, { org, number });
+            const project = projData.organization.projectV2;
+
+            const findField = (name) =>
+              project.fields.nodes.find(f => f.name.toLowerCase() === name.toLowerCase());
+
+            const effortField = findField('Effort');
+            const categoryField = findField('Category');
+            const impactField = findField('Impact');
+
+            let item = project.items.nodes.find(n => n.content?.id === issueId);
+            if (!item) {
+              const addRes = await github.graphql(`
+                mutation($projectId: ID!, $contentId: ID!) {
+                  addProjectV2ItemById(input:{projectId:$projectId, contentId:$contentId}) {
+                    item { id }
+                  }
+                }`, { projectId: project.id, contentId: issueId });
+              item = addRes.addProjectV2ItemById.item;
+            }
+
+            const setSingle = async (field, value) => {
+              if (!field || !value) return;
+              const opt = field.options.find(o => o.name.toLowerCase() === value.toLowerCase());
+              if (!opt) return;
+              await github.graphql(`
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                  updateProjectV2ItemFieldValue(input:{
+                    projectId:$projectId, itemId:$itemId, fieldId:$fieldId,
+                    value:{ singleSelectOptionId:$optionId }
+                  }) { clientMutationId }
+                }`, { projectId: project.id, itemId: item.id, fieldId: field.id, optionId: opt.id });
+            };
+
+            const setText = async (field, value) => {
+              if (!field || !value) return;
+              await github.graphql(`
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $text: String!) {
+                  updateProjectV2ItemFieldValue(input:{
+                    projectId:$projectId, itemId:$itemId, fieldId:$fieldId,
+                    value:{ text:$text }
+                  }) { clientMutationId }
+                }`, { projectId: project.id, itemId: item.id, fieldId: field.id, text: value });
+            };
+
+            await setSingle(effortField, effort);
+            await setSingle(categoryField, category);
+            await setText(impactField, impact);
