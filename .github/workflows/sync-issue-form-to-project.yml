@@ -61,10 +61,11 @@ jobs:
           github-token: ${{ secrets.PROJECT_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const body = (context.payload.issue.body || '');
+            const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const section = (label) => {
-              const re = new RegExp(`(?<=^###\\s*${label}\\s*\\n)[\\s\\S]*?(?=\\n###\\s|$)`, 'mi');
-              const m = body.match(re);
-              return m ? m[0].trim() : null;
+              const pat = new RegExp(`(?:^|\\n)###\\s*${escapeRegExp(label)}\\s*\\n([\\s\\S]*?)(?=\\n###\\s|$)`, 'i');
+              const m = body.match(pat);
+              return m ? m[1].trim() : null;
             };
 
             const area = section('Area / Component');
