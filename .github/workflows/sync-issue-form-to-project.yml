@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  PROJECT_URL: https://github.com/orgs/Kiwasthal/projects/2
+  PROJECT_URL: https://github.com/users/Kiwasthal/projects/2
 
 jobs:
   sync:
@@ -36,21 +36,28 @@ jobs:
               return m ? m[0].trim() : null;
             };
 
+            const area = section('Area / Component');
             const effort = section('Effort');
             const impact = section('Impact');
+            const proposal = section('Proposed Action');
             const category = section('Category');
 
             const projectUrl = process.env.PROJECT_URL;
             const orgMatch = projectUrl.match(/orgs\\/([^/]+)\\/projects\\/(\\d+)/);
-            if (!orgMatch) core.setFailed(`Bad PROJECT_URL: ${projectUrl}`);
-            const org = orgMatch[1];
-            const number = parseInt(orgMatch[2], 10);
+            const userMatch = projectUrl.match(/users\\/([^/]+)\\/projects\\/(\\d+)/);
+            if (!orgMatch && !userMatch) {
+              core.setFailed(`Bad PROJECT_URL (expect orgs/... or users/...): ${projectUrl}`);
+              return;
+            }
+            const isOrg = !!orgMatch;
+            const login = (orgMatch ? orgMatch[1] : userMatch[1]);
+            const number = parseInt((orgMatch ? orgMatch[2] : userMatch[2]), 10);
 
             const issueId = context.payload.issue.node_id;
 
             const projectQuery = `
-              query($org: String!, $number: Int!) {
-                organization(login: $org) {
+              query($login: String!, $number: Int!) {
+                organization(login: $login) {
                   projectV2(number: $number) {
                     id
                     fields(first: 50) {
@@ -59,15 +66,29 @@ jobs:
                         ... on ProjectV2SingleSelectField { id name options { id name } }
                       }
                     }
-                    items(first: 200) {
-                      nodes { id content { ... on Issue { id } } }
+                    items(first: 200) { nodes { id content { ... on Issue { id } } } }
+                  }
+                }
+                user(login: $login) {
+                  projectV2(number: $number) {
+                    id
+                    fields(first: 50) {
+                      nodes {
+                        ... on ProjectV2FieldCommon { id name dataType }
+                        ... on ProjectV2SingleSelectField { id name options { id name } }
+                      }
                     }
+                    items(first: 200) { nodes { id content { ... on Issue { id } } } }
                   }
                 }
               }
             `;
-            const projData = await github.graphql(projectQuery, { org, number });
-            const project = projData.organization.projectV2;
+            const projData = await github.graphql(projectQuery, { login, number });
+            const project = (projData.organization?.projectV2) || (projData.user?.projectV2);
+            if (!project) {
+              core.setFailed(`Project not found for ${projectUrl}`);
+              return;
+            }
 
             const findField = (name) =>
               project.fields.nodes.find(f => f.name.toLowerCase() === name.toLowerCase());
@@ -75,6 +96,8 @@ jobs:
             const effortField = findField('Effort');
             const categoryField = findField('Category');
             const impactField = findField('Impact');
+            const areaField = findField('Area / Component');
+            const proposalField = findField('Proposed Action');
 
             let item = project.items.nodes.find(n => n.content?.id === issueId);
             if (!item) {
@@ -114,3 +137,5 @@ jobs:
             await setSingle(effortField, effort);
             await setSingle(categoryField, category);
             await setText(impactField, impact);
+            await setText(areaField, area);
+            await setText(proposalField, proposal);
