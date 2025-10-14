@@ -30,14 +30,16 @@ jobs:
           script: |
             try {
               const projectUrl = process.env.PROJECT_URL;
-              const orgMatch = projectUrl.match(/orgs\\/([^/]+)\\/projects\\/(\\d+)/);
-              const userMatch = projectUrl.match(/users\\/([^/]+)\\/projects\\/(\\d+)/);
-              if (!orgMatch && !userMatch) {
+              const url = new URL(projectUrl);
+              const parts = url.pathname.split('/').filter(Boolean);
+              // Expect: /orgs/<login>/projects/<number> OR /users/<login>/projects/<number>
+              if (parts.length !== 4 || (parts[0] !== 'orgs' && parts[0] !== 'users') || parts[2] !== 'projects') {
                 core.setFailed(`Bad PROJECT_URL (expect orgs/... or users/...): ${projectUrl}`);
                 return;
               }
-              const login = (orgMatch ? orgMatch[1] : userMatch[1]);
-              const number = parseInt((orgMatch ? orgMatch[2] : userMatch[2]), 10);
+              const isOrg = parts[0] === 'orgs';
+              const login = parts[1];
+              const number = parseInt(parts[3], 10);
               const q = `
                 query($login: String!, $number: Int!) {
                   organization(login: $login) { projectV2(number: $number) { id title } }
@@ -45,7 +47,7 @@ jobs:
                 }
               `;
               const r = await github.graphql(q, { login, number });
-              const proj = r.organization?.projectV2 || r.user?.projectV2;
+              const proj = (isOrg ? r.organization?.projectV2 : r.user?.projectV2) || r.organization?.projectV2 || r.user?.projectV2;
               if (!proj) {
                 core.setFailed(`Project not found or not visible. login=${login} number=${number}`);
                 return;
@@ -61,18 +63,26 @@ jobs:
           github-token: ${{ secrets.PROJECT_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const body = (context.payload.issue.body || '');
-            const escapeRegExp = (s) => {
-              let out = '';
-              const specialChars = new Set(['\\', '^', '$', '.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '|']);
-              for (const ch of s) {
-                out += specialChars.has(ch) ? `\\${ch}` : ch;
-              }
-              return out;
-            };
             const section = (label) => {
-              const pat = new RegExp(`(?:^|\\n)###\\s*${escapeRegExp(label)}\\s*\\n([\\s\\S]*?)(?=\\n###\\s|$)`, 'i');
-              const m = body.match(pat);
-              return m ? m[1].trim() : null;
+              const lines = body.split('\n');
+              const header = `### ${label}`.toLowerCase();
+              let collecting = false;
+              const collected = [];
+              for (const line of lines) {
+                const lower = line.toLowerCase();
+                if (!collecting) {
+                  if (lower.trim().startsWith(header)) {
+                    collecting = true;
+                  }
+                  continue;
+                }
+                if (lower.startsWith('### ')) {
+                  break;
+                }
+                collected.push(line);
+              }
+              const text = collected.join('\n').trim();
+              return text.length ? text : null;
             };
 
             const area = section('Area / Component');
@@ -82,15 +92,15 @@ jobs:
             const category = section('Category');
 
             const projectUrl = process.env.PROJECT_URL;
-            const orgMatch = projectUrl.match(/orgs\\/([^/]+)\\/projects\\/(\\d+)/);
-            const userMatch = projectUrl.match(/users\\/([^/]+)\\/projects\\/(\\d+)/);
-            if (!orgMatch && !userMatch) {
+            const url = new URL(projectUrl);
+            const parts = url.pathname.split('/').filter(Boolean);
+            if (parts.length !== 4 || (parts[0] !== 'orgs' && parts[0] !== 'users') || parts[2] !== 'projects') {
               core.setFailed(`Bad PROJECT_URL (expect orgs/... or users/...): ${projectUrl}`);
               return;
             }
-            const isOrg = !!orgMatch;
-            const login = (orgMatch ? orgMatch[1] : userMatch[1]);
-            const number = parseInt((orgMatch ? orgMatch[2] : userMatch[2]), 10);
+            const isOrg = parts[0] === 'orgs';
+            const login = parts[1];
+            const number = parseInt(parts[3], 10);
 
             core.info(`Parsed sections -> Effort: ${effort} | Category: ${category} | Impact length: ${impact?.length || 0} | Area: ${area} | Proposal length: ${proposal?.length || 0}`);
             core.info(`Target project -> ${isOrg ? 'org' : 'user'}: ${login} #${number}`);
