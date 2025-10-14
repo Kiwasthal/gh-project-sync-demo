@@ -55,17 +55,19 @@ async function run() {
     const { isOrg, login, number } = parseProjectUrl(projectUrl);
 
     // Check access
-    const q = `
+    const q = isOrg
+      ? `
       query($login: String!, $number: Int!) {
         organization(login: $login) { projectV2(number: $number) { id title } }
+      }
+    `
+      : `
+      query($login: String!, $number: Int!) {
         user(login: $login) { projectV2(number: $number) { id title } }
       }
     `;
     const r = await octokit.graphql(q, { login, number });
-    const proj =
-      (isOrg ? r.organization?.projectV2 : r.user?.projectV2) ||
-      r.organization?.projectV2 ||
-      r.user?.projectV2;
+    const proj = isOrg ? r.organization?.projectV2 : r.user?.projectV2;
     if (!proj)
       throw new Error(
         `Project not found or not visible. login=${login} number=${number}`
@@ -91,7 +93,8 @@ async function run() {
     const issueId = github.context.payload?.issue?.node_id;
     if (!issueId) throw new Error("No issue node_id in context");
 
-    const projectQuery = `
+    const projectQuery = isOrg
+      ? `
       query($login: String!, $number: Int!) {
         organization(login: $login) {
           projectV2(number: $number) {
@@ -105,6 +108,10 @@ async function run() {
             items(first: 200) { nodes { id content { ... on Issue { id } } } }
           }
         }
+      }
+    `
+      : `
+      query($login: String!, $number: Int!) {
         user(login: $login) {
           projectV2(number: $number) {
             id
@@ -120,8 +127,9 @@ async function run() {
       }
     `;
     const projData = await octokit.graphql(projectQuery, { login, number });
-    const project =
-      projData.organization?.projectV2 || projData.user?.projectV2;
+    const project = isOrg
+      ? projData.organization?.projectV2
+      : projData.user?.projectV2;
     if (!project) throw new Error(`Project not found for ${projectUrl}`);
 
     const findField = (name) =>
