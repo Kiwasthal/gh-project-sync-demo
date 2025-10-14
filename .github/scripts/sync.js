@@ -138,10 +138,9 @@ async function run() {
       : projData.user?.projectV2;
     if (!project) throw new Error(`Project not found for ${projectUrl}`);
 
+    const fieldsNodes = project.fields?.nodes || [];
     const findField = (name) =>
-      project.fields.nodes.find(
-        (f) => f.name.toLowerCase() === name.toLowerCase()
-      );
+      fieldsNodes.find((f) => f.name.toLowerCase() === name.toLowerCase());
     const effortField = findField("Effort");
     const categoryField = findField("Category");
     const impactField = findField("Impact");
@@ -186,8 +185,9 @@ async function run() {
         after: pageInfo.endCursor,
       });
       const nextConn = isOrg
-        ? next.organization.projectV2.items
-        : next.user.projectV2.items;
+        ? next.organization?.projectV2?.items
+        : next.user?.projectV2?.items;
+      if (!nextConn) break;
       allItems = allItems.concat(nextConn.nodes || []);
       pageInfo = nextConn.pageInfo;
     }
@@ -208,6 +208,7 @@ async function run() {
 
     const setSingle = async (field, value) => {
       if (!field || !value) return;
+      if (!Array.isArray(field.options)) return;
       const opt = field.options.find(
         (o) => o.name.toLowerCase() === value.toLowerCase()
       );
