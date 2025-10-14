@@ -105,7 +105,10 @@ async function run() {
                 ... on ProjectV2SingleSelectField { id name options { id name } }
               }
             }
-            items(first: 200) { nodes { id content { ... on Issue { id } } } }
+            items(first: 100) {
+              nodes { id content { ... on Issue { id } } }
+              pageInfo { hasNextPage endCursor }
+            }
           }
         }
       }
@@ -121,7 +124,10 @@ async function run() {
                 ... on ProjectV2SingleSelectField { id name options { id name } }
               }
             }
-            items(first: 200) { nodes { id content { ... on Issue { id } } } }
+            items(first: 100) {
+              nodes { id content { ... on Issue { id } } }
+              pageInfo { hasNextPage endCursor }
+            }
           }
         }
       }
@@ -142,7 +148,51 @@ async function run() {
     const areaField = findField("Area / Component");
     const proposalField = findField("Proposed Action");
 
-    let item = project.items.nodes.find((n) => n.content?.id === issueId);
+    // Paginate items until we find the issue or exhaust pages
+    let allItems = project.items?.nodes || [];
+    let pageInfo = project.items?.pageInfo;
+    while (
+      !allItems.find((n) => n.content?.id === issueId) &&
+      pageInfo?.hasNextPage
+    ) {
+      const itemsQuery = isOrg
+        ? `
+        query($login: String!, $number: Int!, $after: String) {
+          organization(login: $login) {
+            projectV2(number: $number) {
+              items(first: 100, after: $after) {
+                nodes { id content { ... on Issue { id } } }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+          }
+        }
+      `
+        : `
+        query($login: String!, $number: Int!, $after: String) {
+          user(login: $login) {
+            projectV2(number: $number) {
+              items(first: 100, after: $after) {
+                nodes { id content { ... on Issue { id } } }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+          }
+        }
+      `;
+      const next = await octokit.graphql(itemsQuery, {
+        login,
+        number,
+        after: pageInfo.endCursor,
+      });
+      const nextConn = isOrg
+        ? next.organization.projectV2.items
+        : next.user.projectV2.items;
+      allItems = allItems.concat(nextConn.nodes || []);
+      pageInfo = nextConn.pageInfo;
+    }
+
+    let item = allItems.find((n) => n.content?.id === issueId);
     if (!item) {
       const addRes = await octokit.graphql(
         `
