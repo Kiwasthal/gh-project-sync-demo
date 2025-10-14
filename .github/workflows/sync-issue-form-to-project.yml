@@ -61,7 +61,14 @@ jobs:
           github-token: ${{ secrets.PROJECT_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const body = (context.payload.issue.body || '');
-            const escapeRegExp = (s) => s.replace(/[.*+?^$(){}|[\]\\]/g, '\\$&');
+            const escapeRegExp = (s) => {
+              let out = '';
+              const specialChars = new Set(['\\', '^', '$', '.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '|']);
+              for (const ch of s) {
+                out += specialChars.has(ch) ? `\\${ch}` : ch;
+              }
+              return out;
+            };
             const section = (label) => {
               const pat = new RegExp(`(?:^|\\n)###\\s*${escapeRegExp(label)}\\s*\\n([\\s\\S]*?)(?=\\n###\\s|$)`, 'i');
               const m = body.match(pat);
