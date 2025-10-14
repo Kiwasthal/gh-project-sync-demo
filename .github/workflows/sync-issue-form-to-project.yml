@@ -14,7 +14,6 @@ env:
 
 jobs:
   sync:
-    if: contains(github.event.issue.labels.*.name, 'tech-debt')
     runs-on: ubuntu-latest
 
     steps:
