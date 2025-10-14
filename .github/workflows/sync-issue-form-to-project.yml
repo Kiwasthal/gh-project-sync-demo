@@ -23,6 +23,38 @@ jobs:
           project-url: ${{ env.PROJECT_URL }}
           github-token: ${{ secrets.PROJECT_TOKEN || secrets.GITHUB_TOKEN }}
 
+      - name: Check project access (debug)
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PROJECT_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            try {
+              const projectUrl = process.env.PROJECT_URL;
+              const orgMatch = projectUrl.match(/orgs\\/([^/]+)\\/projects\\/(\\d+)/);
+              const userMatch = projectUrl.match(/users\\/([^/]+)\\/projects\\/(\\d+)/);
+              if (!orgMatch && !userMatch) {
+                core.setFailed(`Bad PROJECT_URL (expect orgs/... or users/...): ${projectUrl}`);
+                return;
+              }
+              const login = (orgMatch ? orgMatch[1] : userMatch[1]);
+              const number = parseInt((orgMatch ? orgMatch[2] : userMatch[2]), 10);
+              const q = `
+                query($login: String!, $number: Int!) {
+                  organization(login: $login) { projectV2(number: $number) { id title } }
+                  user(login: $login) { projectV2(number: $number) { id title } }
+                }
+              `;
+              const r = await github.graphql(q, { login, number });
+              const proj = r.organization?.projectV2 || r.user?.projectV2;
+              if (!proj) {
+                core.setFailed(`Project not found or not visible. login=${login} number=${number}`);
+                return;
+              }
+              core.info(`Project resolved: id=${proj.id} title="${proj.title}"`);
+            } catch (e) {
+              core.setFailed(`Project access check failed: ${e.message}`);
+            }
+
       - name: Map form fields to Project fields
         uses: actions/github-script@v7
         with:
@@ -85,12 +117,15 @@ jobs:
                 }
               }
             `;
-            const projData = await github.graphql(projectQuery, { login, number });
-            const project = (projData.organization?.projectV2) || (projData.user?.projectV2);
-            if (!project) {
-              core.setFailed(`Project not found for ${projectUrl}`);
+            let project;
+            try {
+              const projData = await github.graphql(projectQuery, { login, number });
+              project = (projData.organization?.projectV2) || (projData.user?.projectV2);
+            } catch (e) {
+              core.setFailed(`GraphQL lookup failed: ${e.message}`);
               return;
             }
+            if (!project) { core.setFailed(`Project not found for ${projectUrl}`); return; }
 
             const findField = (name) =>
               project.fields.nodes.find(f => f.name.toLowerCase() === name.toLowerCase());
@@ -103,37 +138,42 @@ jobs:
 
             let item = project.items.nodes.find(n => n.content?.id === issueId);
             if (!item) {
-              const addRes = await github.graphql(`
-                mutation($projectId: ID!, $contentId: ID!) {
-                  addProjectV2ItemById(input:{projectId:$projectId, contentId:$contentId}) {
-                    item { id }
-                  }
-                }`, { projectId: project.id, contentId: issueId });
-              item = addRes.addProjectV2ItemById.item;
+              try {
+                const addRes = await github.graphql(`
+                  mutation($projectId: ID!, $contentId: ID!) {
+                    addProjectV2ItemById(input:{projectId:$projectId, contentId:$contentId}) {
+                      item { id }
+                    }
+                  }`, { projectId: project.id, contentId: issueId });
+                item = addRes.addProjectV2ItemById.item;
+              } catch (e) {
+                core.setFailed(`addProjectV2ItemById failed: ${e.message}`);
+                return;
+              }
             }
 
             const setSingle = async (field, value) => {
               if (!field || !value) return;
               const opt = field.options.find(o => o.name.toLowerCase() === value.toLowerCase());
               if (!opt) return;
-              await github.graphql(`
+              try { await github.graphql(`
                 mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
                   updateProjectV2ItemFieldValue(input:{
                     projectId:$projectId, itemId:$itemId, fieldId:$fieldId,
                     value:{ singleSelectOptionId:$optionId }
                   }) { clientMutationId }
-                }`, { projectId: project.id, itemId: item.id, fieldId: field.id, optionId: opt.id });
+                }`, { projectId: project.id, itemId: item.id, fieldId: field.id, optionId: opt.id }); } catch (e) { core.setFailed(`update single-select failed for ${field?.name}: ${e.message}`); }
             };
 
             const setText = async (field, value) => {
               if (!field || !value) return;
-              await github.graphql(`
+              try { await github.graphql(`
                 mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $text: String!) {
                   updateProjectV2ItemFieldValue(input:{
                     projectId:$projectId, itemId:$itemId, fieldId:$fieldId,
                     value:{ text:$text }
                   }) { clientMutationId }
-                }`, { projectId: project.id, itemId: item.id, fieldId: field.id, text: value });
+                }`, { projectId: project.id, itemId: item.id, fieldId: field.id, text: value }); } catch (e) { core.setFailed(`update text failed for ${field?.name}: ${e.message}`); }
             };
 
             await setSingle(effortField, effort);
