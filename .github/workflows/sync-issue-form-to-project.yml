@@ -17,6 +17,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Ensure issue is on the project
         uses: actions/add-to-project@v0.5.0
         with:
